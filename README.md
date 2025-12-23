@@ -204,7 +204,7 @@ Input: [B, 3, 256, 256] → Encoder → Latent [B, 64] → Decoder → Output: [
 
 ## References
 
-1. Lipman et al. "Flow Matching for Generative Modeling" (2023)
+1. [Lipman et al. "Flow Matching for Generative Modeling" (2023)](https://arxiv.org/pdf/2210.02747)
 2. [The 17 Wallpaper Groups - Wikipedia](https://en.wikipedia.org/wiki/Wallpaper_group)
 3. [International Tables for Crystallography](https://it.iucr.org/)
 
