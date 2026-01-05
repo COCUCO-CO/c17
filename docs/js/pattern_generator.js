@@ -1,26 +1,20 @@
 /**
  * Generador de patrones de wallpaper con SIMETRÍAS EXACTAS
  * 
- * PRINCIPIO: Las transformaciones usadas aquí DEBEN coincidir EXACTAMENTE
- * con las transformaciones de ImageTransform en symmetry.js
+ * ENFOQUE: Generar patrones que son INTRÍNSECAMENTE simétricos
+ * usando funciones matemáticas que tienen la simetría incorporada.
  * 
- * Transformaciones de ImageTransform:
- * - rotate90 CCW:  dest(x,y) = src(y, W-1-x)       -> simetría: f(x,y) = f(y, W-1-x)
- * - rotate180:     dest(x,y) = src(W-1-x, H-1-y)   -> simetría: f(x,y) = f(W-1-x, H-1-y)
- * - rotate270:     dest(x,y) = src(H-1-y, x)       -> simetría: f(x,y) = f(H-1-y, x)
- * - reflect_v:     dest(x,y) = src(W-1-x, y)       -> simetría: f(x,y) = f(W-1-x, y)
- * - reflect_h:     dest(x,y) = src(x, H-1-y)       -> simetría: f(x,y) = f(x, H-1-y)
- * - reflect_d:     dest(x,y) = src(y, x)           -> simetría: f(x,y) = f(y, x)
- * - reflect_ad:    dest(x,y) = src(H-1-y, W-1-x)   -> simetría: f(x,y) = f(H-1-y, W-1-x)
+ * Para rotaciones: usar funciones f(r, θ mod (360°/n))
+ * Para reflexiones: usar funciones f(|x - cx|, y) o f(x, |y - cy|)
  */
 
 const PatternGenerator = {
     
     /**
-     * Crear motivo asimétrico aleatorio usando Gaussianas
+     * Crear ruido base usando Gaussianas
      */
-    createMotif(size, rng, complexity = 5) {
-        const motif = new Float32Array(size * size);
+    createNoise(size, rng, complexity = 5) {
+        const noise = new Float32Array(size * size);
         
         for (let k = 0; k < complexity; k++) {
             const cx = rng() * size;
@@ -32,13 +26,12 @@ const PatternGenerator = {
                 for (let x = 0; x < size; x++) {
                     const dx = x - cx;
                     const dy = y - cy;
-                    const value = amplitude * Math.exp(-(dx*dx + dy*dy) / (2 * sigma * sigma));
-                    motif[y * size + x] += value;
+                    noise[y * size + x] += amplitude * Math.exp(-(dx*dx + dy*dy) / (2 * sigma * sigma));
                 }
             }
         }
         
-        return this.normalize(motif);
+        return noise;
     },
     
     /**
@@ -58,54 +51,45 @@ const PatternGenerator = {
     },
     
     /**
-     * Obtener valor con interpolación bilinear y wrapping
+     * Sample con wrapping (para patrones periódicos)
      */
-    sampleBilinear(data, size, x, y) {
-        // Wrap coordinates for periodic patterns
-        x = ((x % size) + size) % size;
-        y = ((y % size) + size) % size;
-        
-        const x0 = Math.floor(x);
-        const y0 = Math.floor(y);
-        const x1 = (x0 + 1) % size;
-        const y1 = (y0 + 1) % size;
-        
-        const fx = x - x0;
-        const fy = y - y0;
-        
-        const v00 = data[y0 * size + x0];
-        const v10 = data[y0 * size + x1];
-        const v01 = data[y1 * size + x0];
-        const v11 = data[y1 * size + x1];
-        
-        return v00 * (1-fx) * (1-fy) + v10 * fx * (1-fy) + 
-               v01 * (1-fx) * fy + v11 * fx * fy;
+    sample(data, size, x, y) {
+        x = Math.floor(((x % size) + size) % size);
+        y = Math.floor(((y % size) + size) % size);
+        return data[y * size + x];
     },
     
     /**
-     * Shorthand for size-1
+     * Constantes matemáticas
      */
     W(size) { return size - 1; },
     
+    // =====================================================
+    // GRUPOS SIN ROTACIÓN O CON ROTACIÓN 180°
+    // =====================================================
+    
     /**
-     * p1: Solo traslaciones (sin simetría puntual)
+     * p1: Solo traslaciones
      */
     generateP1(size, rng) {
-        return this.normalize(this.createMotif(size, rng));
+        return this.normalize(this.createNoise(size, rng));
     },
     
     /**
-     * p2: Rotación 180° - f(x,y) = f(W-x, W-y)
+     * p2: Rotación 180°
+     * Simetría: f(x,y) = f(W-x, W-y)
      */
     generateP2(size, rng) {
-        const base = this.createMotif(size, rng);
+        const noise = this.createNoise(size, rng);
         const result = new Float32Array(size * size);
         const W = size - 1;
         
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
-                const v1 = this.sampleBilinear(base, size, x, y);
-                const v2 = this.sampleBilinear(base, size, W - x, W - y);  // C2
+                // Promedio con el punto rotado 180°
+                const v1 = noise[y * size + x];
+                const x2 = W - x, y2 = W - y;
+                const v2 = noise[y2 * size + x2];
                 result[y * size + x] = (v1 + v2) / 2;
             }
         }
@@ -117,14 +101,14 @@ const PatternGenerator = {
      * pm: Reflexión vertical - f(x,y) = f(W-x, y)
      */
     generatePM(size, rng) {
-        const base = this.createMotif(size, rng);
+        const noise = this.createNoise(size, rng);
         const result = new Float32Array(size * size);
         const W = size - 1;
         
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
-                const v1 = this.sampleBilinear(base, size, x, y);
-                const v2 = this.sampleBilinear(base, size, W - x, y);  // σv
+                const v1 = noise[y * size + x];
+                const v2 = noise[y * size + (W - x)];
                 result[y * size + x] = (v1 + v2) / 2;
             }
         }
@@ -133,18 +117,19 @@ const PatternGenerator = {
     },
     
     /**
-     * pg: Glide reflection - f(x,y) = f(W-x, y + H/2)
+     * pg: Glide vertical
      */
     generatePG(size, rng) {
-        const base = this.createMotif(size, rng);
+        const noise = this.createNoise(size, rng);
         const result = new Float32Array(size * size);
         const W = size - 1;
-        const halfSize = size / 2;
+        const H2 = Math.floor(size / 2);
         
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
-                const v1 = this.sampleBilinear(base, size, x, y);
-                const v2 = this.sampleBilinear(base, size, W - x, y + halfSize);  // glide
+                const v1 = noise[y * size + x];
+                const y2 = (y + H2) % size;
+                const v2 = noise[y2 * size + (W - x)];
                 result[y * size + x] = (v1 + v2) / 2;
             }
         }
@@ -153,20 +138,22 @@ const PatternGenerator = {
     },
     
     /**
-     * cm: Reflexión + glide (centered)
+     * cm: Reflexión + centrado
      */
     generateCM(size, rng) {
-        const base = this.createMotif(size, rng);
+        const noise = this.createNoise(size, rng);
         const result = new Float32Array(size * size);
         const W = size - 1;
-        const halfSize = size / 2;
+        const H2 = Math.floor(size / 2);
         
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
-                const v1 = this.sampleBilinear(base, size, x, y);
-                const v2 = this.sampleBilinear(base, size, W - x, y);              // σv
-                const v3 = this.sampleBilinear(base, size, x + halfSize, y + halfSize);  // centered translation
-                const v4 = this.sampleBilinear(base, size, W - x + halfSize, y + halfSize);
+                const v1 = noise[y * size + x];
+                const v2 = noise[y * size + (W - x)];
+                const y3 = (y + H2) % size;
+                const x3 = (x + H2) % size;
+                const v3 = noise[y3 * size + x3];
+                const v4 = noise[y3 * size + (W - x3 + size) % size];
                 result[y * size + x] = (v1 + v2 + v3 + v4) / 4;
             }
         }
@@ -176,19 +163,18 @@ const PatternGenerator = {
     
     /**
      * pmm: Reflexiones horizontal y vertical (D2)
-     * f(x,y) = f(W-x, y) = f(x, W-y) = f(W-x, W-y)
      */
     generatePMM(size, rng) {
-        const base = this.createMotif(size, rng);
+        const noise = this.createNoise(size, rng);
         const result = new Float32Array(size * size);
         const W = size - 1;
         
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
-                const v1 = this.sampleBilinear(base, size, x, y);
-                const v2 = this.sampleBilinear(base, size, W - x, y);      // σv
-                const v3 = this.sampleBilinear(base, size, x, W - y);      // σh
-                const v4 = this.sampleBilinear(base, size, W - x, W - y);  // C2
+                const v1 = noise[y * size + x];
+                const v2 = noise[y * size + (W - x)];         // σv
+                const v3 = noise[(W - y) * size + x];         // σh
+                const v4 = noise[(W - y) * size + (W - x)];   // C2
                 result[y * size + x] = (v1 + v2 + v3 + v4) / 4;
             }
         }
@@ -197,20 +183,20 @@ const PatternGenerator = {
     },
     
     /**
-     * pmg: Reflexión vertical + rotación 180° (pero no reflexión horizontal - es glide)
+     * pmg: σv + C2 (pero σh es glide)
      */
     generatePMG(size, rng) {
-        const base = this.createMotif(size, rng);
+        const noise = this.createNoise(size, rng);
         const result = new Float32Array(size * size);
         const W = size - 1;
-        const halfSize = size / 2;
+        const H2 = Math.floor(size / 2);
         
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
-                const v1 = this.sampleBilinear(base, size, x, y);
-                const v2 = this.sampleBilinear(base, size, W - x, y);          // σv
-                const v3 = this.sampleBilinear(base, size, W - x, W - y);      // C2
-                const v4 = this.sampleBilinear(base, size, x, W - y + halfSize); // glide h
+                const v1 = noise[y * size + x];
+                const v2 = noise[y * size + (W - x)];                    // σv
+                const v3 = noise[(W - y) * size + (W - x)];              // C2
+                const v4 = noise[((W - y) + H2) % size * size + x];      // glide h
                 result[y * size + x] = (v1 + v2 + v3 + v4) / 4;
             }
         }
@@ -219,20 +205,20 @@ const PatternGenerator = {
     },
     
     /**
-     * pgg: Two perpendicular glides (no pure reflection, but has C2)
+     * pgg: Dos glides perpendiculares, C2
      */
     generatePGG(size, rng) {
-        const base = this.createMotif(size, rng);
+        const noise = this.createNoise(size, rng);
         const result = new Float32Array(size * size);
         const W = size - 1;
-        const halfSize = size / 2;
+        const H2 = Math.floor(size / 2);
         
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
-                const v1 = this.sampleBilinear(base, size, x, y);
-                const v2 = this.sampleBilinear(base, size, W - x, W - y);          // C2
-                const v3 = this.sampleBilinear(base, size, W - x, y + halfSize);   // glide v
-                const v4 = this.sampleBilinear(base, size, x + halfSize, W - y);   // glide h
+                const v1 = noise[y * size + x];
+                const v2 = noise[(W - y) * size + (W - x)];              // C2
+                const v3 = noise[((y + H2) % size) * size + (W - x)];    // glide v
+                const v4 = noise[((W - y + H2) % size) * size + x];      // glide h
                 result[y * size + x] = (v1 + v2 + v3 + v4) / 4;
             }
         }
@@ -241,43 +227,33 @@ const PatternGenerator = {
     },
     
     /**
-     * cmm: Como pmm pero con celda centrada
+     * cmm: D2 con celda centrada
      */
     generateCMM(size, rng) {
-        const base = this.createMotif(size, rng);
-        const result = new Float32Array(size * size);
-        const W = size - 1;
-        
-        for (let y = 0; y < size; y++) {
-            for (let x = 0; x < size; x++) {
-                const v1 = this.sampleBilinear(base, size, x, y);
-                const v2 = this.sampleBilinear(base, size, W - x, y);      // σv
-                const v3 = this.sampleBilinear(base, size, x, W - y);      // σh
-                const v4 = this.sampleBilinear(base, size, W - x, W - y);  // C2
-                result[y * size + x] = (v1 + v2 + v3 + v4) / 4;
-            }
-        }
-        
-        return this.normalize(result);
+        return this.generatePMM(size, rng);  // Mismo grupo puntual
     },
     
+    // =====================================================
+    // p4, p4m, p4g - Simetría C4/D4
+    // Usamos índices discretos para evitar errores de interpolación
+    // =====================================================
+    
     /**
-     * p4: Rotación 90° (C4) - usando EXACTAMENTE las mismas transformaciones que ImageTransform
-     * 
-     * ImageTransform._rotate90: dest(x,y) = src(y, W-x)
-     * Entonces para simetría: f(x,y) = f(y, W-x) = f(W-x, W-y) = f(W-y, x)
+     * p4: Rotación 90° (C4)
+     * Transformación exacta: f(x,y) = f(y, W-x) = f(W-x, W-y) = f(W-y, x)
      */
     generateP4(size, rng) {
-        const base = this.createMotif(size, rng);
+        const noise = this.createNoise(size, rng);
         const result = new Float32Array(size * size);
         const W = size - 1;
         
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
-                const v1 = this.sampleBilinear(base, size, x, y);         // e
-                const v2 = this.sampleBilinear(base, size, y, W - x);     // C4 (90° CCW)
-                const v3 = this.sampleBilinear(base, size, W - x, W - y); // C2 (180°)
-                const v4 = this.sampleBilinear(base, size, W - y, x);     // C4³ (270° CCW)
+                // Las 4 posiciones relacionadas por C4
+                const v1 = noise[y * size + x];              // e
+                const v2 = noise[(W - x) * size + y];        // C4 (90° CCW)
+                const v3 = noise[(W - y) * size + (W - x)];  // C2 (180°)
+                const v4 = noise[x * size + (W - y)];        // C4³ (270° CCW)
                 result[y * size + x] = (v1 + v2 + v3 + v4) / 4;
             }
         }
@@ -286,36 +262,26 @@ const PatternGenerator = {
     },
     
     /**
-     * p4m: Rotación 90° + todas las reflexiones (D4)
-     * 
-     * Simetrías:
-     * - e:   f(x, y)
-     * - C4:  f(y, W-x)
-     * - C2:  f(W-x, W-y)
-     * - C4³: f(W-y, x)
-     * - σv:  f(W-x, y)
-     * - σh:  f(x, W-y)
-     * - σd:  f(y, x)
-     * - σd': f(W-y, W-x)
+     * p4m: D4 - C4 + todas las reflexiones
      */
     generateP4M(size, rng) {
-        const base = this.createMotif(size, rng);
+        const noise = this.createNoise(size, rng);
         const result = new Float32Array(size * size);
         const W = size - 1;
         
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
-                // Rotaciones
-                const v1 = this.sampleBilinear(base, size, x, y);         // e
-                const v2 = this.sampleBilinear(base, size, y, W - x);     // C4
-                const v3 = this.sampleBilinear(base, size, W - x, W - y); // C2
-                const v4 = this.sampleBilinear(base, size, W - y, x);     // C4³
+                // Rotaciones C4
+                const v1 = noise[y * size + x];              // e
+                const v2 = noise[(W - x) * size + y];        // C4
+                const v3 = noise[(W - y) * size + (W - x)];  // C2
+                const v4 = noise[x * size + (W - y)];        // C4³
                 
                 // Reflexiones
-                const v5 = this.sampleBilinear(base, size, W - x, y);     // σv
-                const v6 = this.sampleBilinear(base, size, x, W - y);     // σh
-                const v7 = this.sampleBilinear(base, size, y, x);         // σd
-                const v8 = this.sampleBilinear(base, size, W - y, W - x); // σd'
+                const v5 = noise[y * size + (W - x)];        // σv
+                const v6 = noise[(W - y) * size + x];        // σh
+                const v7 = noise[x * size + y];              // σd (diagonal)
+                const v8 = noise[(W - x) * size + (W - y)];  // σd' (anti-diagonal)
                 
                 result[y * size + x] = (v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8) / 8;
             }
@@ -325,30 +291,29 @@ const PatternGenerator = {
     },
     
     /**
-     * p4g: C4 + diagonal reflections only (NOT axial)
-     * σv y σh son glides en p4g, no reflexiones puras
+     * p4g: C4 + σd, σd' (diagonales), pero σv y σh son GLIDES
      */
     generateP4G(size, rng) {
-        const base = this.createMotif(size, rng);
+        const noise = this.createNoise(size, rng);
         const result = new Float32Array(size * size);
         const W = size - 1;
-        const halfSize = size / 2;
+        const H2 = Math.floor(size / 2);
         
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
-                // C4 rotaciones
-                const v1 = this.sampleBilinear(base, size, x, y);         // e
-                const v2 = this.sampleBilinear(base, size, y, W - x);     // C4
-                const v3 = this.sampleBilinear(base, size, W - x, W - y); // C2
-                const v4 = this.sampleBilinear(base, size, W - y, x);     // C4³
+                // Rotaciones C4
+                const v1 = noise[y * size + x];              // e
+                const v2 = noise[(W - x) * size + y];        // C4
+                const v3 = noise[(W - y) * size + (W - x)];  // C2
+                const v4 = noise[x * size + (W - y)];        // C4³
                 
-                // Reflexiones diagonales
-                const v5 = this.sampleBilinear(base, size, y, x);         // σd
-                const v6 = this.sampleBilinear(base, size, W - y, W - x); // σd'
+                // Reflexiones DIAGONALES (puras)
+                const v5 = noise[x * size + y];              // σd
+                const v6 = noise[(W - x) * size + (W - y)];  // σd'
                 
-                // Glides axiales (no reflexiones puras)
-                const v7 = this.sampleBilinear(base, size, W - x + halfSize, y); // gv
-                const v8 = this.sampleBilinear(base, size, x, W - y + halfSize); // gh
+                // Glides AXIALES (reflexión + traslación)
+                const v7 = noise[y * size + ((W - x + H2) % size)];  // gv
+                const v8 = noise[((W - y + H2) % size) * size + x];  // gh
                 
                 result[y * size + x] = (v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8) / 8;
             }
@@ -357,139 +322,116 @@ const PatternGenerator = {
         return this.normalize(result);
     },
     
+    // =====================================================
+    // GRUPOS HEXAGONALES - C3, C6, D3, D6
+    // Usar coordenadas polares para simetría exacta
+    // =====================================================
+    
     /**
-     * p3: Rotación 120° (C3)
-     * 
-     * Para rotación general de ángulo θ alrededor del centro (cx, cy):
-     * dest(x,y) = src at rotated coordinates
-     * 
-     * Para 120° CCW: cos=-0.5, sin=√3/2
-     * Simetría: f(x,y) = f(rotated_120(x,y)) = f(rotated_240(x,y))
+     * Generar ruido en coordenadas polares con simetría angular
+     */
+    createPolarNoise(size, rng, nFold, hasReflection, complexity = 4) {
+        const result = new Float32Array(size * size);
+        const cx = (size - 1) / 2;
+        const cy = (size - 1) / 2;
+        const maxR = Math.sqrt(cx * cx + cy * cy);
+        
+        // Crear ondas radiales y angulares con la simetría deseada
+        const waves = [];
+        for (let k = 0; k < complexity; k++) {
+            waves.push({
+                rFreq: rng() * 8 + 1,      // frecuencia radial
+                rPhase: rng() * Math.PI * 2,
+                aFreq: Math.floor(rng() * 3) * nFold,  // múltiplo de nFold para simetría
+                aPhase: rng() * Math.PI * 2,
+                amplitude: rng() * 0.5 + 0.5
+            });
+        }
+        
+        for (let y = 0; y < size; y++) {
+            for (let x = 0; x < size; x++) {
+                const dx = x - cx;
+                const dy = y - cy;
+                const r = Math.sqrt(dx * dx + dy * dy) / maxR;
+                let theta = Math.atan2(dy, dx);
+                if (theta < 0) theta += 2 * Math.PI;
+                
+                // Si hay reflexión, usar |sin| o |cos| para hacer par
+                let value = 0;
+                for (const wave of waves) {
+                    const radial = Math.sin(wave.rFreq * r * Math.PI + wave.rPhase);
+                    let angular;
+                    if (hasReflection) {
+                        // Función par respecto al eje de reflexión
+                        angular = Math.cos(wave.aFreq * theta + wave.aPhase);
+                    } else {
+                        // Función general con simetría rotacional
+                        angular = Math.sin(wave.aFreq * theta + wave.aPhase);
+                    }
+                    value += wave.amplitude * radial * angular;
+                }
+                
+                result[y * size + x] = value;
+            }
+        }
+        
+        return this.normalize(result);
+    },
+    
+    /**
+     * p3: Simetría C3 (rotación 120°)
      */
     generateP3(size, rng) {
-        const base = this.createMotif(size, rng);
-        const result = new Float32Array(size * size);
-        const cx = (size - 1) / 2;
-        const cy = (size - 1) / 2;
-        
-        const cos120 = -0.5;
-        const sin120 = Math.sqrt(3) / 2;
-        const cos240 = -0.5;
-        const sin240 = -Math.sqrt(3) / 2;
-        
-        for (let y = 0; y < size; y++) {
-            for (let x = 0; x < size; x++) {
-                const dx = x - cx;
-                const dy = y - cy;
-                
-                // e: identity
-                const v1 = this.sampleBilinear(base, size, x, y);
-                
-                // C3 (120° CCW): source coordinates for inverse rotation
-                // To fill dest(x,y) from rotated image, we need src at (-120° rotation of (x,y))
-                // -120° rotation: cos=cos(-120)=-0.5, sin=sin(-120)=-√3/2
-                const sx1 = cos120 * dx + sin120 * dy + cx;  // note: +sin for inverse
-                const sy1 = -sin120 * dx + cos120 * dy + cy;
-                const v2 = this.sampleBilinear(base, size, sx1, sy1);
-                
-                // C3² (240° CCW): inverse is -240° = 120°
-                const sx2 = cos240 * dx + sin240 * dy + cx;
-                const sy2 = -sin240 * dx + cos240 * dy + cy;
-                const v3 = this.sampleBilinear(base, size, sx2, sy2);
-                
-                result[y * size + x] = (v1 + v2 + v3) / 3;
-            }
-        }
-        
-        return this.normalize(result);
+        return this.createPolarNoise(size, rng, 3, false);
     },
     
     /**
-     * p3m1: C3 + 3 reflexiones (D3)
-     * Ejes de reflexión a 0°, 60°, 120° desde vertical
+     * p3m1: Simetría D3 (C3 + reflexiones)
      */
     generateP3M1(size, rng) {
-        const base = this.createMotif(size, rng);
-        const result = new Float32Array(size * size);
-        const cx = (size - 1) / 2;
-        const cy = (size - 1) / 2;
-        
-        for (let y = 0; y < size; y++) {
-            for (let x = 0; x < size; x++) {
-                const dx = x - cx;
-                const dy = y - cy;
-                
-                let sum = 0;
-                
-                // C3 rotations (0°, 120°, 240°)
-                const rotAngles = [0, 120, 240];
-                for (const angle of rotAngles) {
-                    const rad = -angle * Math.PI / 180;  // negative for inverse
-                    const cos = Math.cos(rad);
-                    const sin = Math.sin(rad);
-                    const sx = cos * dx - sin * dy + cx;
-                    const sy = sin * dx + cos * dy + cy;
-                    sum += this.sampleBilinear(base, size, sx, sy);
-                }
-                
-                // 3 reflexiones (ejes a 0°, 60°, 120° = ejes verticales rotados)
-                // Reflexión sobre eje a ángulo θ: x' = x*cos(2θ) + y*sin(2θ), y' = x*sin(2θ) - y*cos(2θ)
-                const refAxisAngles = [90, 150, 210];  // 90° = vertical axis, etc.
-                for (const axisAngle of refAxisAngles) {
-                    const theta2 = 2 * axisAngle * Math.PI / 180;
-                    const cos2 = Math.cos(theta2);
-                    const sin2 = Math.sin(theta2);
-                    const mx = cos2 * dx + sin2 * dy + cx;
-                    const my = sin2 * dx - cos2 * dy + cy;
-                    sum += this.sampleBilinear(base, size, mx, my);
-                }
-                
-                result[y * size + x] = sum / 6;
-            }
-        }
-        
-        return this.normalize(result);
+        return this.createPolarNoise(size, rng, 3, true);
     },
     
     /**
-     * p31m: C3 + 3 reflexiones con ejes rotados 30° respecto a p3m1
+     * p31m: También D3 pero con ejes de reflexión rotados 30°
      */
     generateP31M(size, rng) {
-        const base = this.createMotif(size, rng);
+        // Mismo grupo puntual D3, diferente orientación de los ejes
         const result = new Float32Array(size * size);
         const cx = (size - 1) / 2;
         const cy = (size - 1) / 2;
+        const maxR = Math.sqrt(cx * cx + cy * cy);
+        
+        const waves = [];
+        for (let k = 0; k < 4; k++) {
+            waves.push({
+                rFreq: rng() * 8 + 1,
+                rPhase: rng() * Math.PI * 2,
+                aFreq: Math.floor(rng() * 3) * 3,
+                aPhase: rng() * Math.PI * 2,
+                amplitude: rng() * 0.5 + 0.5
+            });
+        }
+        
+        // Offset de 30° para p31m vs p3m1
+        const axisOffset = Math.PI / 6;
         
         for (let y = 0; y < size; y++) {
             for (let x = 0; x < size; x++) {
                 const dx = x - cx;
                 const dy = y - cy;
+                const r = Math.sqrt(dx * dx + dy * dy) / maxR;
+                let theta = Math.atan2(dy, dx) - axisOffset;
+                if (theta < 0) theta += 2 * Math.PI;
                 
-                let sum = 0;
-                
-                // C3 rotations
-                const rotAngles = [0, 120, 240];
-                for (const angle of rotAngles) {
-                    const rad = -angle * Math.PI / 180;
-                    const cos = Math.cos(rad);
-                    const sin = Math.sin(rad);
-                    const sx = cos * dx - sin * dy + cx;
-                    const sy = sin * dx + cos * dy + cy;
-                    sum += this.sampleBilinear(base, size, sx, sy);
+                let value = 0;
+                for (const wave of waves) {
+                    const radial = Math.sin(wave.rFreq * r * Math.PI + wave.rPhase);
+                    const angular = Math.cos(wave.aFreq * theta + wave.aPhase);
+                    value += wave.amplitude * radial * angular;
                 }
                 
-                // 3 reflexiones con ejes a 0° (horizontal), 60°, 120°
-                const refAxisAngles = [0, 60, 120];
-                for (const axisAngle of refAxisAngles) {
-                    const theta2 = 2 * axisAngle * Math.PI / 180;
-                    const cos2 = Math.cos(theta2);
-                    const sin2 = Math.sin(theta2);
-                    const mx = cos2 * dx + sin2 * dy + cx;
-                    const my = sin2 * dx - cos2 * dy + cy;
-                    sum += this.sampleBilinear(base, size, mx, my);
-                }
-                
-                result[y * size + x] = sum / 6;
+                result[y * size + x] = value;
             }
         }
         
@@ -497,82 +439,17 @@ const PatternGenerator = {
     },
     
     /**
-     * p6: Rotación 60° (C6)
+     * p6: Simetría C6 (rotación 60°)
      */
     generateP6(size, rng) {
-        const base = this.createMotif(size, rng);
-        const result = new Float32Array(size * size);
-        const cx = (size - 1) / 2;
-        const cy = (size - 1) / 2;
-        
-        const rotAngles = [0, 60, 120, 180, 240, 300];
-        
-        for (let y = 0; y < size; y++) {
-            for (let x = 0; x < size; x++) {
-                const dx = x - cx;
-                const dy = y - cy;
-                
-                let sum = 0;
-                for (const angle of rotAngles) {
-                    const rad = -angle * Math.PI / 180;  // negative for inverse mapping
-                    const cos = Math.cos(rad);
-                    const sin = Math.sin(rad);
-                    const sx = cos * dx - sin * dy + cx;
-                    const sy = sin * dx + cos * dy + cy;
-                    sum += this.sampleBilinear(base, size, sx, sy);
-                }
-                
-                result[y * size + x] = sum / 6;
-            }
-        }
-        
-        return this.normalize(result);
+        return this.createPolarNoise(size, rng, 6, false);
     },
     
     /**
-     * p6m: C6 + 6 reflexiones (D6) - máxima simetría
+     * p6m: Simetría D6 (C6 + reflexiones) - máxima simetría
      */
     generateP6M(size, rng) {
-        const base = this.createMotif(size, rng);
-        const result = new Float32Array(size * size);
-        const cx = (size - 1) / 2;
-        const cy = (size - 1) / 2;
-        
-        const rotAngles = [0, 60, 120, 180, 240, 300];
-        const refAxisAngles = [0, 30, 60, 90, 120, 150];  // 6 ejes de reflexión
-        
-        for (let y = 0; y < size; y++) {
-            for (let x = 0; x < size; x++) {
-                const dx = x - cx;
-                const dy = y - cy;
-                
-                let sum = 0;
-                
-                // 6 rotaciones
-                for (const angle of rotAngles) {
-                    const rad = -angle * Math.PI / 180;
-                    const cos = Math.cos(rad);
-                    const sin = Math.sin(rad);
-                    const sx = cos * dx - sin * dy + cx;
-                    const sy = sin * dx + cos * dy + cy;
-                    sum += this.sampleBilinear(base, size, sx, sy);
-                }
-                
-                // 6 reflexiones
-                for (const axisAngle of refAxisAngles) {
-                    const theta2 = 2 * axisAngle * Math.PI / 180;
-                    const cos2 = Math.cos(theta2);
-                    const sin2 = Math.sin(theta2);
-                    const mx = cos2 * dx + sin2 * dy + cx;
-                    const my = sin2 * dx - cos2 * dy + cy;
-                    sum += this.sampleBilinear(base, size, mx, my);
-                }
-                
-                result[y * size + x] = sum / 12;
-            }
-        }
-        
-        return this.normalize(result);
+        return this.createPolarNoise(size, rng, 6, true);
     },
     
     /**
@@ -611,7 +488,7 @@ const PatternGenerator = {
     }
 };
 
-// Exportar para uso global
+// Exportar
 if (typeof window !== 'undefined') {
     window.PatternGenerator = PatternGenerator;
 }
