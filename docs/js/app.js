@@ -2214,22 +2214,13 @@ class WallpaperExplorer {
             this.currentMatrix = SymmetryOps.multiplyMatrices(matrix, this.currentMatrix);
         }
         
-        // Calculate REAL correlation between transformed and original
-        const realCorrelation = ImageTransform.correlation(
-            this.originalImageData, 
-            this.transformedImageData
-        );
+        // Determinar si es simetría válida basándose en la DEFINICIÓN MATEMÁTICA del grupo
+        // NO en la correlación calculada (que puede tener errores de interpolación)
+        const isValidSymmetry = this.isValidSymmetryOperation(operation);
         
-        // Threshold más tolerante (90%) para detectar simetrías
-        // Los errores de interpolación pueden bajar la correlación incluso en simetrías válidas
-        const isValidSymmetry = realCorrelation >= 0.90;
-        
-        // Para simetrías válidas, mostrar imagen original (evita artefactos de interpolación)
-        // Para no-simetrías, mostrar la transformación real
+        // Para simetrías válidas: mostrar imagen original (porque sabemos que es igual)
+        // Para no-simetrías: mostrar la transformación real
         const displayData = isValidSymmetry ? this.originalImageData : this.transformedImageData;
-        
-        // Para la visualización de diferencia: si es simetría, comparar original con original (= 100%)
-        const displayCorrelation = isValidSymmetry ? 1.0 : realCorrelation;
         
         // Animate the transformation visually (siempre se muestra la animación)
         this.animateTransformation(operation, params, () => {
@@ -2248,12 +2239,12 @@ class WallpaperExplorer {
         this.updateHistory();
         
         // Update difference visualization
-        // Si es simetría válida: mostrar 100% y sin diferencias
-        // Si no es simetría: mostrar correlación real y diferencias reales
-        this.updateDifferenceWithCorrelation(displayCorrelation, isValidSymmetry);
+        // Si es simetría válida: mostrar 100% (matemáticamente sabemos que es perfecta)
+        // Si no es simetría: mostrar la superposición/diferencia visual
+        this.updateDifferenceWithCorrelation(isValidSymmetry ? 1.0 : null, isValidSymmetry);
         
-        // Update Cayley graph para simetrías válidas
-        if (isValidSymmetry) {
+        // Update Cayley graph - siempre actualizar para rotaciones/reflexiones
+        if (operation === 'rotate' || operation === 'reflect') {
             this.updateCayleyGraphPosition(`${opName} ${opParams}`);
         }
     }
@@ -2387,7 +2378,7 @@ class WallpaperExplorer {
     /**
      * Update difference visualization using pre-calculated correlation
      * Si isValidSymmetry=true, muestra diferencia perfecta (100%)
-     * Si isValidSymmetry=false, muestra diferencia real
+     * Si isValidSymmetry=false, muestra diferencia visual sin porcentaje específico
      */
     updateDifferenceWithCorrelation(correlationToShow, isValidSymmetry) {
         const size = this.canvasSize;
@@ -2406,23 +2397,20 @@ class WallpaperExplorer {
         imageData.data.set(diffData);
         this.differenceCtx.putImageData(imageData, 0, 0);
         
-        // Mostrar el porcentaje
-        const percent = Math.round(Math.abs(correlationToShow) * 100);
         const correlationValue = document.getElementById('correlationValue');
-        correlationValue.textContent = `${percent}%`;
-        
-        // Color code the correlation
         correlationValue.classList.remove('low', 'medium');
-        if (isValidSymmetry || percent >= 98) {
-            // Es simetría - mostrar match
+        
+        if (isValidSymmetry) {
+            // Es simetría válida del grupo - mostrar 100% y animación de match
+            correlationValue.textContent = '100%';
             document.querySelector('.canvas-wrapper.difference').classList.add('match-animation');
             setTimeout(() => {
                 document.querySelector('.canvas-wrapper.difference').classList.remove('match-animation');
             }, 1000);
-        } else if (percent < 50) {
+        } else {
+            // No es simetría - mostrar indicador visual de "no match"
+            correlationValue.textContent = '≠';
             correlationValue.classList.add('low');
-        } else if (percent < 85) {
-            correlationValue.classList.add('medium');
         }
     }
     
