@@ -308,10 +308,10 @@ class TestGeneratorMathematicalCorrectness(unittest.TestCase):
     def test_rotation_180_is_involution(self):
         """R180 ∘ R180 = Identity."""
         gen = WallpaperGroupGenerator(resolution=64, seed=42)
-        img = gen._create_motif(32)
+        img = gen._create_asymmetric_motif(32)
         
-        rotated_once = gen._rotate(img, np.pi)
-        rotated_twice = gen._rotate(rotated_once, np.pi)
+        rotated_once = gen._rotate_180(img)
+        rotated_twice = gen._rotate_180(rotated_once)
         
         # Should be back to original
         diff = np.abs(img - rotated_twice).mean()
@@ -321,11 +321,11 @@ class TestGeneratorMathematicalCorrectness(unittest.TestCase):
     def test_rotation_90_four_times(self):
         """R90^4 = Identity."""
         gen = WallpaperGroupGenerator(resolution=64, seed=42)
-        img = gen._create_motif(32)
+        img = gen._create_asymmetric_motif(32)
         
         rotated = img.copy()
         for _ in range(4):
-            rotated = gen._rotate(rotated, np.pi/2)
+            rotated = gen._rotate_90(rotated)
         
         diff = np.abs(img - rotated).mean()
         print(f"  R90^4 deviation: {diff:.6f}")
@@ -334,7 +334,7 @@ class TestGeneratorMathematicalCorrectness(unittest.TestCase):
     def test_reflection_is_involution(self):
         """σ ∘ σ = Identity."""
         gen = WallpaperGroupGenerator(resolution=64, seed=42)
-        img = gen._create_motif(32)
+        img = gen._create_asymmetric_motif(32)
         
         # Horizontal reflection
         reflected_h = gen._reflect_y(gen._reflect_y(img))
@@ -349,13 +349,13 @@ class TestGeneratorMathematicalCorrectness(unittest.TestCase):
     def test_reflections_commute_to_rotation(self):
         """σ_h ∘ σ_v = R180 (up to interpolation error)."""
         gen = WallpaperGroupGenerator(resolution=64, seed=42)
-        img = gen._create_motif(32)
+        img = gen._create_asymmetric_motif(32)
         
         # Compose reflections
         composed = gen._reflect_y(gen._reflect_x(img))
         
         # Compare to 180° rotation
-        rotated = gen._rotate(img, np.pi)
+        rotated = gen._rotate_180(img)
         
         # They should be the same (allowing for interpolation)
         diff = np.abs(composed - rotated).mean()
@@ -379,8 +379,8 @@ class TestCellSymmetryDirect(unittest.TestCase):
         | M      | R180(M) |
         | R180(M)| M       |
         """
-        motif = self.gen._create_motif(self.motif_size)
-        rotated = self.gen._rotate(motif, np.pi)
+        motif = self.gen._create_asymmetric_motif(self.motif_size)
+        rotated = self.gen._rotate_180(motif)
         
         # Build cell manually
         top = np.hstack([motif, rotated])
@@ -426,7 +426,7 @@ class TestCellSymmetryDirect(unittest.TestCase):
         
         This should have both reflection symmetries.
         """
-        motif = self.gen._create_motif(self.motif_size)
+        motif = self.gen._create_asymmetric_motif(self.motif_size)
         
         # Build cell manually
         top = np.hstack([motif, self.gen._reflect_x(motif)])
@@ -478,6 +478,8 @@ def run_diagnostic():
 
 if __name__ == "__main__":
     run_diagnostic()
+
+
 
 
 

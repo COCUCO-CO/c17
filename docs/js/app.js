@@ -32,8 +32,7 @@ class WallpaperExplorer {
         // El centro de rotación es 149.5 (entre pixels 149 y 150)
         this.canvasSize = 300;
         
-        // Método de generación de patrones
-        this.useGenerators = false;
+        // Semilla para generación de patrones
         this.patternSeed = Math.random();
         
         this.init();
@@ -70,12 +69,6 @@ class WallpaperExplorer {
         
         // Regenerate button
         document.getElementById('regenerateBtn').addEventListener('click', () => {
-            this.regeneratePattern();
-        });
-        
-        // Generator toggle
-        document.getElementById('useGenerators').addEventListener('change', (e) => {
-            this.useGenerators = e.target.checked;
             this.regeneratePattern();
         });
         
@@ -704,6 +697,9 @@ class WallpaperExplorer {
         const opName = operationName.trim();
         
         // Mapeo unificado: todas las tablas usan notación Cn + σ
+        // Nota: Para D₃ (p3m1, p31m) las reflexiones son σ₁, σ₂, σ₃
+        // Para D₆ (p6m) las reflexiones son σ₁...σ₆
+        // Para D₄ (p4m) las reflexiones son σᵥ, σₕ, σ_d, σ_d′
         const opMapping = {
             // Rotaciones
             'Rotación 60°': ['C₆'],
@@ -713,15 +709,15 @@ class WallpaperExplorer {
             'Rotación 240°': ['C₃²'],
             'Rotación 270°': ['C₄³'],
             'Rotación 300°': ['C₆⁵'],
-            // Reflexiones
-            // D₂/D₄: σᵥ (vertical), σₕ (horizontal), σ_d (diagonal)
-            // D₃: σ₁, σ₂, σ₃
-            // D₆: σ₁(0°), σ₂(30°), σ₃(60°), σ₄(90°), σ₅(120°), σ₆(150°)
-            'Reflexión Vertical': ['σᵥ', 'σ₄', 'σ₁'],   // eje vertical (90°) o primera
-            'Reflexión Horizontal': ['σₕ', 'σ₁', 'σ₄'], // eje horizontal (0°) o primera
-            'Reflexión Diagonal': ['σ_d', 'σ₂', 'σ₃'],
-            'Reflexión Anti-diagonal': ['σ_d′', 'σ₃', 'σ₂'],
-            // Glides
+            // Reflexiones - mapeo por grupo
+            // Para D₄ (p4m, p4g): σᵥ, σₕ, σ_d, σ_d′
+            // Para D₃ (p3m1, p31m): σ₁ (vertical-ish), σ₂, σ₃
+            // Para D₆ (p6m): σ₁ (horizontal), σ₄ (vertical), etc.
+            'Reflexión Vertical': ['σᵥ', 'σ₁', 'σ₄'],  
+            'Reflexión Horizontal': ['σₕ', 'σ₁', 'σ₄'],
+            'Reflexión Diagonal': ['σ_d', 'σ₂', 'σ₃', 'σ₅'],
+            'Reflexión Anti-diagonal': ['σ_d′', 'σ₃', 'σ₂', 'σ₆'],
+            // Glides - no son operaciones del grupo puntual
             'Glide Horizontal': ['gₕ', 'g'],
             'Glide Vertical': ['gᵥ', 'g']
         };
@@ -758,12 +754,66 @@ class WallpaperExplorer {
         
         // Apply the operation: new position = current × operation
         const previousNode = this.currentCayleyNode;
-        this.currentCayleyNode = table[currentIdx][opIdx];
+        const result = table[currentIdx][opIdx];
+        
+        // Check if result is a valid element or a glide marker like "(g)"
+        if (result.startsWith('(')) {
+            // Result is a glide or other non-point-group operation
+            console.log(`[Cayley] Transition: ${previousNode} × ${matchedElement} = ${result} (glide - staying at ${previousNode})`);
+            // Don't update position - glides don't map to point group elements
+            this.highlightCayleyTableCell(previousNode, matchedElement, result);
+            return;
+        }
+        
+        this.currentCayleyNode = result;
         
         console.log(`[Cayley] Transition: ${previousNode} × ${matchedElement} = ${this.currentCayleyNode}`);
         
         // Redraw graph with new highlight
         this.drawCayleyGraph(group, this.currentCayleyNode);
+        
+        // Highlight the corresponding cell in the multiplication table
+        this.highlightCayleyTableCell(previousNode, matchedElement, this.currentCayleyNode);
+    }
+    
+    /**
+     * Highlight the cell in the Cayley table corresponding to the transition
+     * row × col = result
+     */
+    highlightCayleyTableCell(row, col, result) {
+        // Remove any previous highlight
+        const previousHighlight = document.querySelectorAll('.cayley-table td.cayley-transition-highlight');
+        previousHighlight.forEach(el => el.classList.remove('cayley-transition-highlight'));
+        
+        const previousRowHighlight = document.querySelectorAll('.cayley-table th.cayley-row-highlight, .cayley-table td.cayley-row-highlight');
+        previousRowHighlight.forEach(el => el.classList.remove('cayley-row-highlight'));
+        
+        const previousColHighlight = document.querySelectorAll('.cayley-table th.cayley-col-highlight, .cayley-table td.cayley-col-highlight');
+        previousColHighlight.forEach(el => el.classList.remove('cayley-col-highlight'));
+        
+        // Find and highlight the cell
+        const cells = document.querySelectorAll('.cayley-table td');
+        cells.forEach(cell => {
+            if (cell.dataset.row === row && cell.dataset.col === col) {
+                cell.classList.add('cayley-transition-highlight');
+            }
+        });
+        
+        // Highlight the row header
+        const rowHeaders = document.querySelectorAll('.cayley-table tbody th');
+        rowHeaders.forEach(th => {
+            if (th.textContent === row) {
+                th.classList.add('cayley-row-highlight');
+            }
+        });
+        
+        // Highlight the column header
+        const colHeaders = document.querySelectorAll('.cayley-table thead th');
+        colHeaders.forEach(th => {
+            if (th.textContent === col) {
+                th.classList.add('cayley-col-highlight');
+            }
+        });
     }
     
     updateMatrixDisplay() {
@@ -792,99 +842,22 @@ class WallpaperExplorer {
     generatePattern(groupName) {
         const size = this.canvasSize;
         const imageData = this.originalCtx.createImageData(size, size);
-        const group = WallpaperGroups[groupName];
         
         // Use seed for reproducible patterns
-        const baseSeed = this.hashString(groupName + '_v3_centered');
+        const baseSeed = this.hashString(groupName + '_v4_generators');
         const seed = baseSeed + Math.floor(this.patternSeed * 1000000);
         const rng = this.seededRandom(seed);
         
-        // Si useGenerators está activado, usar el generador desde generadores
-        if (this.useGenerators && typeof PatternGenerator !== 'undefined') {
+        // Always use generator-based pattern generation for correct symmetries
+        if (typeof PatternGenerator !== 'undefined') {
             const pattern = PatternGenerator.generateFromGenerators(groupName, size, { rng });
             this.applyPatternToCanvas(pattern, imageData, size);
             return;
         }
         
-        // Generate pattern with EXACT symmetries centered on canvas
-        let pattern;
-        
-        switch (groupName) {
-            case 'p1':
-                pattern = this.generateP1(size, rng);
-                break;
-            case 'p2':
-                pattern = this.generateP2Centered(size, rng);
-                break;
-            case 'pm':
-                pattern = this.generatePMCentered(size, rng);
-                break;
-            case 'pg':
-                pattern = this.generatePG(size, rng);
-                break;
-            case 'cm':
-                pattern = this.generateCM(size, rng);
-                break;
-            case 'pmm':
-                pattern = this.generatePMMCentered(size, rng);
-                break;
-            case 'pmg':
-                pattern = this.generatePMG(size, rng);
-                break;
-            case 'pgg':
-                pattern = this.generatePGGCentered(size, rng);
-                break;
-            case 'cmm':
-                pattern = this.generateCMMCentered(size, rng);
-                break;
-            case 'p4':
-                pattern = this.generateP4Centered(size, rng);
-                break;
-            case 'p4m':
-                pattern = this.generateP4MCentered(size, rng);
-                break;
-            case 'p4g':
-                pattern = this.generateP4GCentered(size, rng);
-                break;
-            case 'p3':
-                pattern = this.generateP3Centered(size, rng);
-                break;
-            case 'p3m1':
-                pattern = this.generateP3M1Centered(size, rng);
-                break;
-            case 'p31m':
-                pattern = this.generateP31MCentered(size, rng);
-                break;
-            case 'p6':
-                pattern = this.generateP6Centered(size, rng);
-                break;
-            case 'p6m':
-                pattern = this.generateP6MCentered(size, rng);
-                break;
-            default:
-                pattern = this.generateP1(size, rng);
-        }
-        
-        // Fill image data with viridis colormap
-        for (let y = 0; y < size; y++) {
-            for (let x = 0; x < size; x++) {
-                const value = pattern[y * size + x];
-                const [r, g, b] = this.viridisColor(value);
-                const idx = (y * size + x) * 4;
-                imageData.data[idx] = r;
-                imageData.data[idx + 1] = g;
-                imageData.data[idx + 2] = b;
-                imageData.data[idx + 3] = 255;
-            }
-        }
-        
-        // Store and display
-        this.originalImageData = imageData.data.slice();
-        this.transformedImageData = imageData.data.slice();
-        
-        this.originalCtx.putImageData(imageData, 0, 0);
-        this.transformedCtx.putImageData(imageData, 0, 0);
-        this.updateDifference();
+        // Fallback: simple asymmetric pattern if PatternGenerator not available
+        const pattern = this.generateP1(size, rng);
+        this.applyPatternToCanvas(pattern, imageData, size);
     }
     
     /**

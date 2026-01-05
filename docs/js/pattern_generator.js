@@ -234,26 +234,48 @@ const PatternGenerator = {
     },
     
     /**
-     * cm: Centered reflection
+     * cm: Centered reflection - has σᵥ (vertical reflection) symmetry
+     * The pattern should be invariant under vertical reflection (flipLR)
+     * but NOT under horizontal reflection or glides alone
      */
     generateCM(size, rng, motifSize = 64) {
-        const motif = this.createMotif(motifSize, rng);
-        const flipped = this.flipLR(motif, motifSize, motifSize);
+        const halfMotif = this.createMotif(Math.floor(motifSize / 2), rng);
         
-        // Row 1: [motif | flipLR(motif)]
-        const row1 = this.hstack(motif, flipped, motifSize, motifSize);
+        // Create a cell that has vertical reflection symmetry
+        // Cell structure: [M | flipLR(M)] horizontally
+        const cellWidth = motifSize;
+        const cellHeight = Math.floor(motifSize / 2);
+        const cell = new Float32Array(cellWidth * cellHeight);
         
-        // Row 2: shifted by half period
-        const row2Data = new Float32Array(row1.data.length);
-        for (let y = 0; y < row1.height; y++) {
-            for (let x = 0; x < row1.width; x++) {
-                const srcX = (x - motifSize + row1.width) % row1.width;
-                row2Data[y * row1.width + x] = row1.data[y * row1.width + srcX];
+        const halfWidth = Math.floor(motifSize / 2);
+        for (let y = 0; y < cellHeight; y++) {
+            for (let x = 0; x < halfWidth; x++) {
+                const val = halfMotif[y * halfWidth + x];
+                cell[y * cellWidth + x] = val;
+                cell[y * cellWidth + (cellWidth - 1 - x)] = val;  // flipLR
             }
         }
         
-        const cell = this.vstack(row1.data, row2Data, row1.width, row1.height);
-        return this.tile(cell.data, cell.width, cell.height, size);
+        // For cm, we need centered lattice: shift alternate rows by half cell
+        const fullCellHeight = cellHeight * 2;
+        const fullCell = new Float32Array(cellWidth * fullCellHeight);
+        
+        // First row: unshifted
+        for (let y = 0; y < cellHeight; y++) {
+            for (let x = 0; x < cellWidth; x++) {
+                fullCell[y * cellWidth + x] = cell[y * cellWidth + x];
+            }
+        }
+        
+        // Second row: shifted by half
+        for (let y = 0; y < cellHeight; y++) {
+            for (let x = 0; x < cellWidth; x++) {
+                const srcX = (x + halfWidth) % cellWidth;
+                fullCell[(cellHeight + y) * cellWidth + x] = cell[y * cellWidth + srcX];
+            }
+        }
+        
+        return this.tile(fullCell, cellWidth, fullCellHeight, size);
     },
     
     /**
@@ -290,38 +312,39 @@ const PatternGenerator = {
     
     /**
      * pmg: Reflexión vertical + glide horizontal → C₂ emerge
-     * Celda debe tener: σᵥ (reflexión vertical) y C₂ (rotación 180°)
+     * Simetrías: σᵥ (reflexión vertical) y C₂ (rotación 180°)
+     * NO tiene: σₕ (reflexión horizontal pura) - es glide
      */
     generatePMG(size, rng, motifSize = 64) {
-        const halfSize = motifSize;
-        const cellSize = halfSize * 2;
+        const quarterSize = Math.floor(motifSize / 2);
+        const cellSize = motifSize * 2;
         
-        const fund = this.createMotif(halfSize, rng);
+        // Create asymmetric fundamental domain
+        const fund = this.createMotif(quarterSize, rng);
         const cell = new Float32Array(cellSize * cellSize);
         
-        // Upper left: fund
-        this.placeBlock(cell, cellSize, fund, halfSize, halfSize, 0, 0);
+        // Build cell with σᵥ and C₂ symmetry
+        // The cell is 2x2 quarters:
+        // | A        | flipLR(A) |
+        // | rot180(flipLR(A)) | rot180(A) |
+        // This gives σᵥ (vertical reflection) and C₂ (180° rotation)
+        // but NOT σₕ (horizontal reflection)
         
-        // Upper right: flipLR(fund) - reflexión vertical
-        const flipH = this.flipLR(fund, halfSize, halfSize);
-        this.placeBlock(cell, cellSize, flipH, halfSize, halfSize, halfSize, 0);
-        
-        // Lower half: rot180 de la mitad superior (garantiza C₂)
-        // La mitad superior tiene dimensiones halfSize (alto) x cellSize (ancho)
-        const upperHalf = new Float32Array(halfSize * cellSize);
-        for (let y = 0; y < halfSize; y++) {
-            for (let x = 0; x < cellSize; x++) {
-                upperHalf[y * cellSize + x] = cell[y * cellSize + x];
-            }
-        }
-        
-        // Rotar 180° la mitad superior (rectángulo)
-        const lowerHalf = this.rot180Rect(upperHalf, cellSize, halfSize);
-        
-        // Colocar en la mitad inferior
-        for (let y = 0; y < halfSize; y++) {
-            for (let x = 0; x < cellSize; x++) {
-                cell[(halfSize + y) * cellSize + x] = lowerHalf[y * cellSize + x];
+        for (let y = 0; y < quarterSize; y++) {
+            for (let x = 0; x < quarterSize; x++) {
+                const val = fund[y * quarterSize + x];
+                
+                // Top-left: A
+                cell[y * cellSize + x] = val;
+                
+                // Top-right: flipLR(A)
+                cell[y * cellSize + (cellSize - 1 - x)] = val;
+                
+                // Bottom-right: rot180(A)
+                cell[(cellSize - 1 - y) * cellSize + (cellSize - 1 - x)] = val;
+                
+                // Bottom-left: rot180(flipLR(A)) = flipLR(rot180(A))
+                cell[(cellSize - 1 - y) * cellSize + x] = val;
             }
         }
         
@@ -329,34 +352,46 @@ const PatternGenerator = {
     },
     
     /**
-     * pgg: Dos glides perpendiculares -> C2
+     * pgg: Dos glides perpendiculares -> C₂
+     * Simetrías: C₂ (rotación 180°) SOLAMENTE
+     * NO tiene: σᵥ, σₕ (las reflexiones son glides, no puras)
      */
     generatePGG(size, rng, motifSize = 64) {
         const halfSize = motifSize;
         const cellSize = halfSize * 2;
         
+        // Create asymmetric fundamental domain
         const fund = this.createMotif(halfSize, rng);
         const cell = new Float32Array(cellSize * cellSize);
         
-        // Upper left
+        // Build cell with ONLY C₂ symmetry (no pure reflections)
+        // Place fund in upper-left and rot180(fund) in lower-right
+        // The other two quadrants should be DIFFERENT from flipLR or flipUD
+        // to avoid creating pure reflection symmetry
+        
+        // Upper-left: A
         this.placeBlock(cell, cellSize, fund, halfSize, halfSize, 0, 0);
-        // Lower right: rot180
+        
+        // Lower-right: rot180(A) - this creates C₂ symmetry
         const rot = this.rot180(fund, halfSize);
         this.placeBlock(cell, cellSize, rot, halfSize, halfSize, halfSize, halfSize);
         
-        // Upper right: glide of fund
+        // Upper-right and Lower-left: use glided versions (not pure flips)
+        // This ensures NO pure reflection symmetry
         const flipped = this.flipUD(fund, halfSize, halfSize);
         const shift = Math.floor(halfSize / 2);
         const glided = new Float32Array(halfSize * halfSize);
         for (let y = 0; y < halfSize; y++) {
             for (let x = 0; x < halfSize; x++) {
-                const srcX = (x - shift + halfSize) % halfSize;
+                const srcX = (x + shift) % halfSize;
                 glided[y * halfSize + x] = flipped[y * halfSize + srcX];
             }
         }
+        
+        // Upper-right: glided version
         this.placeBlock(cell, cellSize, glided, halfSize, halfSize, halfSize, 0);
         
-        // Lower left: rot180 of upper right
+        // Lower-left: rot180(glided) to maintain C₂
         const glidedRot = this.rot180(glided, halfSize);
         this.placeBlock(cell, cellSize, glidedRot, halfSize, halfSize, 0, halfSize);
         
@@ -471,61 +506,60 @@ const PatternGenerator = {
     
     /**
      * p4g: C₄ + reflexiones DIAGONALES (σ_d, σ_d'), NO axiales
-     * Técnica: Crear motivo, aplicar C₄ y reflexiones diagonales
+     * Simetrías: C₄, C₂, C₄³, σ_d, σ_d′
+     * NO tiene: σᵥ, σₕ (son glides en p4g)
      */
     generateP4G(size, rng, motifSize = 64) {
-        const halfSize = motifSize;
-        const cellSize = halfSize * 2;
+        const cellSize = motifSize * 2;
         const cell = new Float32Array(cellSize * cellSize);
         
-        // Crear motivo fundamental (1/8 de la celda - triángulo)
-        const fund = this.createMotif(halfSize, rng);
+        // Create asymmetric fundamental domain (1/8 of cell - triangular sector)
+        const fundSize = motifSize;
+        const fund = this.createMotif(fundSize, rng);
         
-        // Para p4g necesitamos C₄ + reflexiones diagonales
-        // Construir celda pixel por pixel
         const cx = cellSize / 2;
         const cy = cellSize / 2;
+        
+        // p4g has 8 sectors: C₄ (4 rotations) × σ_d (diagonal reflection)
+        // Sectors 0,2,4,6 are related by C₄
+        // Sectors 1,3,5,7 are diagonal reflections of sectors 0,2,4,6
+        const sectorAngle = Math.PI / 4;  // 45° per sector
         
         for (let y = 0; y < cellSize; y++) {
             for (let x = 0; x < cellSize; x++) {
                 const dx = x - cx;
                 const dy = y - cy;
+                const r = Math.sqrt(dx * dx + dy * dy);
                 
-                // Determinar en qué sector está y mapear al fundamental
                 let angle = Math.atan2(dy, dx);
                 if (angle < 0) angle += 2 * Math.PI;
                 
-                // p4g: 8 sectores (4 rotaciones × 2 reflexiones diagonales)
-                const sector = Math.floor(angle / (Math.PI / 4)) % 8;
+                // Find which sector (0-7)
+                const sector = Math.floor(angle / sectorAngle) % 8;
                 
-                // Mapear al sector fundamental [0, π/4)
-                let mappedAngle = angle;
-                let needsDiagonalReflect = false;
+                // Map to fundamental sector [0, π/4)
+                let localAngle = angle - sector * sectorAngle;
                 
-                // Reducir al primer octante
+                // For odd sectors, apply diagonal reflection (swap angle within sector)
                 if (sector % 2 === 1) {
-                    // Sectores impares: reflejar diagonalmente
-                    mappedAngle = (Math.floor(sector / 2) + 1) * (Math.PI / 2) - angle;
-                    needsDiagonalReflect = true;
-                } else {
-                    mappedAngle = angle - Math.floor(sector / 2) * (Math.PI / 2);
+                    localAngle = sectorAngle - localAngle;
                 }
                 
-                const r = Math.sqrt(dx * dx + dy * dy);
-                const srcX = r * Math.cos(mappedAngle) + cx;
-                const srcY = r * Math.sin(mappedAngle) + cy;
+                // Map back to source coordinates in fundamental domain
+                const srcX = r * Math.cos(localAngle) + cx;
+                const srcY = r * Math.sin(localAngle) + cy;
                 
                 const ix = Math.min(Math.max(Math.floor(srcX), 0), cellSize - 1);
                 const iy = Math.min(Math.max(Math.floor(srcY), 0), cellSize - 1);
                 
-                // Usar el motivo fundamental
-                const fx = ix % halfSize;
-                const fy = iy % halfSize;
-                cell[y * cellSize + x] = fund[fy * halfSize + fx];
+                // Sample from fundamental domain
+                const fx = Math.abs(ix % fundSize);
+                const fy = Math.abs(iy % fundSize);
+                cell[y * cellSize + x] = fund[fy * fundSize + fx];
             }
         }
         
-        // Normalizar
+        // Normalize
         let max = 0;
         for (let i = 0; i < cell.length; i++) {
             if (cell[i] > max) max = cell[i];
@@ -543,11 +577,16 @@ const PatternGenerator = {
      * Crear patrón con simetría Cn o Dn usando mapeo al sector fundamental
      * NO promedia - copia directamente del sector fundamental
      * Esto evita crear simetrías de reflexión accidentales
+     * 
+     * @param base - patrón base (asimétrico)
+     * @param size - tamaño del patrón
+     * @param order - orden de rotación (3 para C₃, 6 para C₆)
+     * @param withReflection - si true, añade reflexiones (Dn en vez de Cn)
      */
     symmetrizeRotational(base, size, order, withReflection = false) {
         const result = new Float32Array(size * size);
-        const cx = size / 2;
-        const cy = size / 2;
+        const cx = (size - 1) / 2;  // Use exact center
+        const cy = (size - 1) / 2;
         
         const sectorAngle = (2 * Math.PI) / order;
         const halfSector = sectorAngle / 2;
@@ -561,23 +600,45 @@ const PatternGenerator = {
                 let angle = Math.atan2(dy, dx);
                 if (angle < 0) angle += 2 * Math.PI;
                 
-                // Determinar sector
+                // Determine sector (0 to order-1)
                 const sector = Math.floor(angle / sectorAngle);
                 let localAngle = angle - sector * sectorAngle;
                 
-                // Si hay reflexión, doblar al medio sector
+                // If reflection symmetry, fold to half sector
                 if (withReflection && localAngle > halfSector) {
                     localAngle = sectorAngle - localAngle;
                 }
                 
-                // Mapear de vuelta al sector fundamental
+                // Map back to fundamental sector coordinates
                 const srcX = r * Math.cos(localAngle) + cx;
                 const srcY = r * Math.sin(localAngle) + cy;
                 
-                const ix = Math.min(Math.max(Math.floor(srcX), 0), size - 1);
-                const iy = Math.min(Math.max(Math.floor(srcY), 0), size - 1);
+                // Bilinear interpolation for smoother results
+                const x0 = Math.floor(srcX);
+                const y0 = Math.floor(srcY);
+                const x1 = Math.min(x0 + 1, size - 1);
+                const y1 = Math.min(y0 + 1, size - 1);
                 
-                result[y * size + x] = base[iy * size + ix];
+                if (x0 >= 0 && x0 < size && y0 >= 0 && y0 < size) {
+                    const fx = srcX - x0;
+                    const fy = srcY - y0;
+                    
+                    const v00 = base[y0 * size + x0];
+                    const v10 = base[y0 * size + x1];
+                    const v01 = base[y1 * size + x0];
+                    const v11 = base[y1 * size + x1];
+                    
+                    result[y * size + x] = 
+                        v00 * (1 - fx) * (1 - fy) +
+                        v10 * fx * (1 - fy) +
+                        v01 * (1 - fx) * fy +
+                        v11 * fx * fy;
+                } else {
+                    // Edge case - nearest neighbor
+                    const ix = Math.min(Math.max(Math.round(srcX), 0), size - 1);
+                    const iy = Math.min(Math.max(Math.round(srcY), 0), size - 1);
+                    result[y * size + x] = base[iy * size + ix];
+                }
             }
         }
         
@@ -586,14 +647,17 @@ const PatternGenerator = {
     
     /**
      * p3: C₃ solo - rotación 120°, SIN reflexiones
+     * Simetrías: C₃ (120°), C₃² (240°)
+     * NO tiene: C₂, σᵥ, σₕ
      */
     generateP3(size, rng, motifSize = 64) {
         const cellSize = motifSize * 2;
         const base = this.createMotif(cellSize, rng);
         
-        // Usar symmetrizeRotational SIN reflexión
+        // Apply C₃ symmetry WITHOUT reflections
         const cell = this.symmetrizeRotational(base, cellSize, 3, false);
         
+        // Normalize
         let max = 0;
         for (let i = 0; i < cell.length; i++) {
             if (cell[i] > max) max = cell[i];
@@ -609,14 +673,17 @@ const PatternGenerator = {
     
     /**
      * p3m1: C₃ + reflexiones a través de centros de rotación (D₃)
+     * Simetrías: C₃, C₃², σ₁, σ₂, σ₃ (3 ejes de reflexión)
+     * Los ejes de reflexión pasan POR los centros de rotación
      */
     generateP3M1(size, rng, motifSize = 64) {
         const cellSize = motifSize * 2;
         const base = this.createMotif(cellSize, rng);
         
-        // D₃ = C₃ + reflexión
+        // D₃ = C₃ + reflexión (6 sectors total)
         const cell = this.symmetrizeRotational(base, cellSize, 3, true);
         
+        // Normalize
         let max = 0;
         for (let i = 0; i < cell.length; i++) {
             if (cell[i] > max) max = cell[i];
@@ -632,19 +699,20 @@ const PatternGenerator = {
     
     /**
      * p31m: C₃ + reflexiones entre centros (D₃ pero con ejes diferentes a p3m1)
+     * Simetrías: C₃, C₃², σ₁, σ₂, σ₃ (3 ejes de reflexión rotados 30° vs p3m1)
+     * Los ejes de reflexión pasan ENTRE los centros de rotación
      */
     generateP31M(size, rng, motifSize = 64) {
         const cellSize = motifSize * 2;
         const base = this.createMotif(cellSize, rng);
         
-        // Similar a p3m1 pero con ejes de reflexión rotados 30°
         const result = new Float32Array(cellSize * cellSize);
-        const cx = cellSize / 2;
-        const cy = cellSize / 2;
+        const cx = (cellSize - 1) / 2;
+        const cy = (cellSize - 1) / 2;
         
-        const sectorAngle = (2 * Math.PI) / 3;
+        const sectorAngle = (2 * Math.PI) / 3;  // 120° sectors
         const halfSector = sectorAngle / 2;
-        const axisOffset = Math.PI / 6;  // 30° offset para p31m vs p3m1
+        const axisOffset = Math.PI / 6;  // 30° offset for p31m reflection axes
         
         for (let y = 0; y < cellSize; y++) {
             for (let x = 0; x < cellSize; x++) {
@@ -652,28 +720,53 @@ const PatternGenerator = {
                 const dy = y - cy;
                 const r = Math.sqrt(dx * dx + dy * dy);
                 
+                // Rotate coordinate system by 30° to align with p31m axes
                 let angle = Math.atan2(dy, dx) - axisOffset;
                 if (angle < 0) angle += 2 * Math.PI;
                 
+                // Find sector and local angle within sector
                 const sector = Math.floor(angle / sectorAngle);
                 let localAngle = angle - sector * sectorAngle;
                 
+                // Fold to half-sector for reflection symmetry
                 if (localAngle > halfSector) {
                     localAngle = sectorAngle - localAngle;
                 }
                 
+                // Rotate back
                 localAngle += axisOffset;
                 
+                // Map to source coordinates
                 const srcX = r * Math.cos(localAngle) + cx;
                 const srcY = r * Math.sin(localAngle) + cy;
                 
-                const ix = Math.min(Math.max(Math.floor(srcX), 0), cellSize - 1);
-                const iy = Math.min(Math.max(Math.floor(srcY), 0), cellSize - 1);
+                // Sample with bilinear interpolation
+                const x0 = Math.floor(srcX);
+                const y0 = Math.floor(srcY);
                 
-                result[y * cellSize + x] = base[iy * cellSize + ix];
+                if (x0 >= 0 && x0 < cellSize - 1 && y0 >= 0 && y0 < cellSize - 1) {
+                    const fx = srcX - x0;
+                    const fy = srcY - y0;
+                    
+                    const v00 = base[y0 * cellSize + x0];
+                    const v10 = base[y0 * cellSize + x0 + 1];
+                    const v01 = base[(y0 + 1) * cellSize + x0];
+                    const v11 = base[(y0 + 1) * cellSize + x0 + 1];
+                    
+                    result[y * cellSize + x] = 
+                        v00 * (1 - fx) * (1 - fy) +
+                        v10 * fx * (1 - fy) +
+                        v01 * (1 - fx) * fy +
+                        v11 * fx * fy;
+                } else {
+                    const ix = Math.min(Math.max(Math.round(srcX), 0), cellSize - 1);
+                    const iy = Math.min(Math.max(Math.round(srcY), 0), cellSize - 1);
+                    result[y * cellSize + x] = base[iy * cellSize + ix];
+                }
             }
         }
         
+        // Normalize
         let max = 0;
         for (let i = 0; i < result.length; i++) {
             if (result[i] > max) max = result[i];
@@ -689,14 +782,17 @@ const PatternGenerator = {
     
     /**
      * p6: C₆ solo - rotación 60°, SIN reflexiones
+     * Simetrías: C₆ (60°), C₃ (120°), C₂ (180°), C₃² (240°), C₆⁵ (300°)
+     * NO tiene: σᵥ, σₕ, σ_d
      */
     generateP6(size, rng, motifSize = 64) {
         const cellSize = motifSize * 2;
         const base = this.createMotif(cellSize, rng);
         
-        // C₆ sin reflexión
+        // C₆ symmetry without reflections (6 sectors)
         const cell = this.symmetrizeRotational(base, cellSize, 6, false);
         
+        // Normalize
         let max = 0;
         for (let i = 0; i < cell.length; i++) {
             if (cell[i] > max) max = cell[i];
@@ -711,15 +807,18 @@ const PatternGenerator = {
     },
     
     /**
-     * p6m: C₆ + reflexiones (D₆)
+     * p6m: C₆ + reflexiones (D₆) - máxima simetría hexagonal
+     * Simetrías: C₆, C₃, C₂, C₃², C₆⁵, σ₁...σ₆ (6 ejes de reflexión)
+     * El grupo puntual D₆ tiene 12 elementos
      */
     generateP6M(size, rng, motifSize = 64) {
         const cellSize = motifSize * 2;
         const base = this.createMotif(cellSize, rng);
         
-        // D₆ = C₆ + reflexión
+        // D₆ = C₆ + reflexión (12 sectors total)
         const cell = this.symmetrizeRotational(base, cellSize, 6, true);
         
+        // Normalize
         let max = 0;
         for (let i = 0; i < cell.length; i++) {
             if (cell[i] > max) max = cell[i];
